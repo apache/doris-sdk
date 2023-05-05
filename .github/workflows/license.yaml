@@ -36,3 +36,4 @@ jobs:
         with:
           submodules: true
       - name: Check license header
+        uses: apache/skywalking-eyes@main
