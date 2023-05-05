@@ -41,7 +41,7 @@ thrift_failed() {
     echo "For example: "
     echo "    THRIFT_BIN=/path/to/thrift/bin/thrift"
     echo ""
-    echo "You can install thrift@v0.13.0 by yourself, or if you have compiled the Doris core source file,"
+    echo "You can install thrift@v0.16.0 by yourself, or if you have compiled the Doris core source file,"
     echo "there is thrift in 'thirdparty/installed/bin/'"
     exit 1
 }
@@ -51,8 +51,8 @@ thrift_failed() {
 $THRIFT_BIN --version >/dev/null 2>&1
 [ $? -eq 127 ] && thrift_failed
 THRIFT_VER=$($THRIFT_BIN --version | awk '{print $3}')
-if [ x"${THRIFT_VER}" != x"0.13.0" ]; then
-    echo "oh, thrift version must be v0.13.0, please reinstall thrift@v0.13.0"
+if [ x"${THRIFT_VER}" != x"0.16.0" ]; then
+    echo "oh, thrift version must be v0.16.0, please reinstall thrift@v0.16.0"
     exit 1
 fi
 
