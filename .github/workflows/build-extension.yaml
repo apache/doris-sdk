@@ -46,4 +46,4 @@ jobs:
 
       - name: Build Doris SDK
         run: |
-          cd thrift-sdk && mvn clean package
+          cd thrift-service && mvn clean package
