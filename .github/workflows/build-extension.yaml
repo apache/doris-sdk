@@ -30,7 +30,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@main
 
       - name: Setup java
         uses: actions/setup-java@v2
