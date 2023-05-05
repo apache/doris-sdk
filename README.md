@@ -19,3 +19,4 @@ under the License.
 
 # Doris SDK
 
+This repository contains the sdk for the [Apache Doris](https://doris.apache.org) project.
