@@ -40,8 +40,8 @@ jobs:
 
       - name: Setup Apache Thrift Compiler
         run: |
-          wget http://archive.ubuntu.com/ubuntu/pool/universe/t/thrift/thrift-compiler_0.13.0-2build2_amd64.deb
-          sudo dpkg -i thrift-compiler_0.13.0-2build2_amd64.deb
+          wget http://archive.ubuntu.com/ubuntu/pool/universe/t/thrift/thrift-compiler_0.16.0-2_amd64.deb
+          sudo dpkg -i thrift-compiler_0.16.0-2_amd64.deb
           thrift --version
 
       - name: Build Doris SDK
