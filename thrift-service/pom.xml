@@ -28,7 +28,7 @@ under the License.
     <artifactId>thrift-service</artifactId>
 
     <properties>
-        <libthrift.version>0.13.0</libthrift.version>
+        <libthrift.version>0.16.0</libthrift.version>
     </properties>
 
     <dependencies>
@@ -46,7 +46,6 @@ under the License.
                 <artifactId>maven-thrift-plugin</artifactId>
                 <version>0.1.11</version>
                 <configuration>
-                    <thriftExecutable>${thrift.binary}</thriftExecutable>
                     <generator>java:fullcamel</generator>
                 </configuration>
                 <executions>
@@ -61,6 +60,5 @@ under the License.
             </plugin>
         </plugins>
     </build>
-
 
 </project>
