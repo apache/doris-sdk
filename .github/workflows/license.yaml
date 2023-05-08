@@ -24,6 +24,7 @@ on:
       - main
     paths-ignore:
       - '**/*.md'
+      - '**/*.tpl'
 
 jobs:
   license-header:
