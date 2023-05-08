@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
----
+#-----
 #export THRIFT_BIN=
 #export MVN_BIN=
 #export JAVA_HOME=
