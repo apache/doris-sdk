@@ -29,6 +29,7 @@ under the License.
 
     <properties>
         <libthrift.version>0.16.0</libthrift.version>
+        <doris.shade.name>org.apache.doris.shade</doris.shade.name>
     </properties>
 
     <dependencies>
@@ -41,6 +42,26 @@ under the License.
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <configuration>
+                    <relocations>
+                        <relocation>
+                            <pattern>org.apache.thrift</pattern>
+                            <shadedPattern>${doris.shade.name}.org.apache.thrift</shadedPattern>
+                        </relocation>
+                    </relocations>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <phase>package</phase>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.thrift.tools</groupId>
                 <artifactId>maven-thrift-plugin</artifactId>
