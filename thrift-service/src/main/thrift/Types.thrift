@@ -25,6 +25,7 @@ typedef i32 TTupleId
 typedef i32 TSlotId
 typedef i64 TTableId
 typedef i64 TTabletId
+typedef i64 TReplicaId
 typedef i64 TVersion
 typedef i64 TVersionHash
 typedef i32 TSchemaHash
@@ -46,6 +47,8 @@ enum TStorageType {
 enum TStorageMedium {
     HDD,
     SSD,
+    S3,
+    REMOTE_CACHE,
 }
 
 enum TVarType {
@@ -88,14 +91,21 @@ enum TPrimitiveType {
   DECIMAL64,
   DECIMAL128I,
   JSONB,
-  UNSUPPORTED
+  UNSUPPORTED,
+  VARIANT,
+  LAMBDA_FUNCTION,
+  AGG_STATE,
+  DECIMAL256,
+  IPV4,
+  IPV6
 }
 
 enum TTypeNodeType {
     SCALAR,
     ARRAY,
     MAP,
-    STRUCT
+    STRUCT,
+    VARIANT,
 }
 
 struct TScalarType {
@@ -114,6 +124,7 @@ struct TScalarType {
 struct TStructField {
     1: required string name
     2: optional string comment
+    3: optional bool contains_null
 }
 
 struct TTypeNode {
@@ -124,6 +135,12 @@ struct TTypeNode {
 
     // only used for structs; has struct_fields.size() corresponding child types
     3: optional list<TStructField> struct_fields
+
+    // old version used for array
+    4: optional bool contains_null
+
+    // update for map/struct type
+    5: optional list<bool> contains_nulls
 }
 
 // A flattened representation of a tree of column types obtained by depth-first
@@ -136,6 +153,11 @@ struct TTypeNode {
 // to TTypeDesc. In future, we merge these two to one
 struct TTypeDesc {
     1: list<TTypeNode> types
+    2: optional bool is_nullable
+    3: optional i64  byte_size
+    4: optional list<TTypeDesc> sub_types
+    5: optional bool result_is_nullable
+    6: optional string function_name
 }
 
 enum TAggregationType {
@@ -145,12 +167,17 @@ enum TAggregationType {
     REPLACE,
     HLL_UNION,
     NONE
+    BITMAP_UNION,
+    REPLACE_IF_NOT_NULL,
+    QUANTILE_UNION
 }
 
 enum TPushType {
     LOAD,
     DELETE,
     LOAD_DELETE
+    // for spark load push request
+    LOAD_V2
 }
 
 enum TTaskType {
@@ -159,8 +186,8 @@ enum TTaskType {
     PUSH,
     CLONE,
     STORAGE_MEDIUM_MIGRATE,
-    ROLLUP,
-    SCHEMA_CHANGE,
+    ROLLUP, // Deprecated
+    SCHEMA_CHANGE,  // Deprecated
     CANCEL_DELETE,  // Deprecated
     MAKE_SNAPSHOT,
     RELEASE_SNAPSHOT,
@@ -168,15 +195,28 @@ enum TTaskType {
     UPLOAD,
     DOWNLOAD,
     CLEAR_REMOTE_FILE,
-    MOVE
+    MOVE,
     REALTIME_PUSH,
     PUBLISH_VERSION,
     CLEAR_ALTER_TASK,
     CLEAR_TRANSACTION_TASK,
-    RECOVER_TABLET,
+    RECOVER_TABLET, // deprecated
     STREAM_LOAD,
     UPDATE_TABLET_META_INFO,
-    ALTER_TASK
+    // this type of task will replace both ROLLUP and SCHEMA_CHANGE
+    ALTER,
+    INSTALL_PLUGIN,
+    UNINSTALL_PLUGIN,
+    COMPACTION,
+    STORAGE_MEDIUM_MIGRATE_V2,
+    NOTIFY_UPDATE_STORAGE_POLICY, // deprecated
+    PUSH_COOLDOWN_CONF,
+    PUSH_STORAGE_POLICY,
+    ALTER_INVERTED_INDEX,
+    GC_BINLOG,
+
+    // CLOUD
+    CALCULATE_DELETE_BITMAP = 1000
 }
 
 enum TStmtType {
@@ -189,6 +229,7 @@ enum TStmtType {
 // level of verboseness for "explain" output
 // TODO: should this go somewhere else?
 enum TExplainLevel {
+  BRIEF,
   NORMAL,
   VERBOSE
 }
@@ -243,6 +284,13 @@ enum TFunctionBinaryType {
 
   // Native-interface, precompiled to IR; loaded from *.ll
   IR,
+
+  // call udfs by rpc service
+  RPC,
+
+  JAVA_UDF,
+
+  AGG_STATE
 }
 
 // Represents a fully qualified function name.
@@ -272,6 +320,8 @@ struct TAggregateFunction {
   8: optional string get_value_fn_symbol
   9: optional string remove_fn_symbol
   10: optional bool is_analytic_only_fn = false
+  // used for java-udaf to point user defined class
+  11: optional string symbol
 }
 
 // Represents a function in the Catalog.
@@ -306,6 +356,7 @@ struct TFunction {
 
   11: optional i64 id
   12: optional string checksum
+  13: optional bool vectorized = false
 }
 
 enum TLoadJobState {
@@ -329,7 +380,14 @@ enum TTableType {
     SCHEMA_TABLE,
     KUDU_TABLE, // Deprecated
     BROKER_TABLE,
-    ES_TABLE
+    ES_TABLE,
+    ODBC_TABLE,
+    HIVE_TABLE,
+    ICEBERG_TABLE,
+    HUDI_TABLE,
+    JDBC_TABLE,
+    TEST_EXTERNAL_TABLE,
+    MAX_COMPUTE_TABLE,
 }
 
 enum TKeysType {
@@ -348,6 +406,9 @@ struct TBackend {
     1: required string host
     2: required TPort be_port
     3: required TPort http_port
+    4: optional TPort brpc_port
+    5: optional bool is_alive
+    6: optional i64 id
 }
 
 struct TResourceInfo {
@@ -366,11 +427,17 @@ enum TFileType {
     FILE_LOCAL,
     FILE_BROKER,
     FILE_STREAM,    // file content is streaming in the buffer
+    FILE_S3,
+    FILE_HDFS,
+    FILE_NET,
 }
 
 struct TTabletCommitInfo {
     1: required i64 tabletId
     2: required i64 backendId
+    // Every load job should check if the global dict is valid, if the global dict
+    // is invalid then should sent the invalid column names to FE
+    3: optional list<string> invalid_dict_cols
 }
 
 enum TLoadType {
@@ -382,4 +449,5 @@ enum TLoadType {
 enum TLoadSourceType {
     RAW,
     KAFKA,
+    MULTI_TABLE,
 }
