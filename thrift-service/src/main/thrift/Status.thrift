@@ -18,6 +18,21 @@
 namespace cpp doris
 namespace java org.apache.doris.sdk.thrift
 
+// NOTE: Each item of StatusCode is explicitly assigned a constant value.
+// The TStatusCode struct is used in all FEs and BEs. In order to be able to
+// avoid errors when identifying status_codes in RPC during upgrading Doris
+// (update and restart the servers one by one), we must ensure that each element
+// always a fixed value.
+//
+// If each element is not explicitly assigned a constant, then the value of
+// each element will be assigned from 0 in turn, which will need us to be very
+// careful when adding and removing elements, to avoid the same element on
+// different machines to be recognized as a different value. i.e., new elements
+// can only be added to the end, and only elements at the end can be deleted.
+// Unfortunately, this implicit constraint is likely to be ignored by
+// programmers when coding, especially those who are new to Doris.
+//
+// NOTE: We use one byte in doris::Status, so the max value is 255.
 enum TStatusCode {
     OK,
     CANCELLED,

@@ -25,6 +25,7 @@ typedef i32 TTupleId
 typedef i32 TSlotId
 typedef i64 TTableId
 typedef i64 TTabletId
+typedef i64 TReplicaId
 typedef i64 TVersion
 typedef i64 TVersionHash
 typedef i32 TSchemaHash
@@ -88,14 +89,21 @@ enum TPrimitiveType {
   DECIMAL64,
   DECIMAL128I,
   JSONB,
-  UNSUPPORTED
+  UNSUPPORTED,
+  VARIANT,
+  LAMBDA_FUNCTION,
+  AGG_STATE,
+  DECIMAL256,
+  IPV4,
+  IPV6
 }
 
 enum TTypeNodeType {
     SCALAR,
     ARRAY,
     MAP,
-    STRUCT
+    STRUCT,
+    VARIANT,
 }
 
 struct TScalarType {
@@ -114,6 +122,7 @@ struct TScalarType {
 struct TStructField {
     1: required string name
     2: optional string comment
+    3: optional bool contains_null
 }
 
 struct TTypeNode {
@@ -124,6 +133,12 @@ struct TTypeNode {
 
     // only used for structs; has struct_fields.size() corresponding child types
     3: optional list<TStructField> struct_fields
+
+    // old version used for array
+    4: optional bool contains_null
+
+    // update for map/struct type
+    5: optional list<bool> contains_nulls
 }
 
 // A flattened representation of a tree of column types obtained by depth-first
@@ -136,6 +151,11 @@ struct TTypeNode {
 // to TTypeDesc. In future, we merge these two to one
 struct TTypeDesc {
     1: list<TTypeNode> types
+    2: optional bool is_nullable
+    3: optional i64  byte_size
+    4: optional list<TTypeDesc> sub_types
+    5: optional bool result_is_nullable
+    6: optional string function_name
 }
 
 enum TAggregationType {
@@ -151,6 +171,8 @@ enum TPushType {
     LOAD,
     DELETE,
     LOAD_DELETE
+    // for spark load push request
+    LOAD_V2
 }
 
 enum TTaskType {
