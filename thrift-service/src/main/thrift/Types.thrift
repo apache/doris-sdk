@@ -168,9 +168,9 @@ enum TAggregationType {
 }
 
 enum TPushType {
-    LOAD,
+    LOAD, // deprecated, it is used for old hadoop dpp load
     DELETE,
-    LOAD_DELETE
+    LOAD_DELETE,
     // for spark load push request
     LOAD_V2
 }
@@ -205,7 +205,7 @@ enum TStmtType {
   QUERY,
   DDL,  // Data definition, e.g. CREATE TABLE (includes read-only functions e.g. SHOW)
   DML,  // Data modification e.g. INSERT
-  EXPLAIN   // EXPLAIN 
+  EXPLAIN   // EXPLAIN
 }
 
 // level of verboseness for "explain" output
