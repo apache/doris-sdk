@@ -25,6 +25,7 @@ typedef i32 TTupleId
 typedef i32 TSlotId
 typedef i64 TTableId
 typedef i64 TTabletId
+typedef i64 TReplicaId
 typedef i64 TVersion
 typedef i64 TVersionHash
 typedef i32 TSchemaHash
@@ -132,6 +133,7 @@ struct TTypeNode {
 
     // only used for structs; has struct_fields.size() corresponding child types
     3: optional list<TStructField> struct_fields
+
     // old version used for array
     4: optional bool contains_null
 
@@ -149,6 +151,11 @@ struct TTypeNode {
 // to TTypeDesc. In future, we merge these two to one
 struct TTypeDesc {
     1: list<TTypeNode> types
+    2: optional bool is_nullable
+    3: optional i64  byte_size
+    4: optional list<TTypeDesc> sub_types
+    5: optional bool result_is_nullable
+    6: optional string function_name
 }
 
 enum TAggregationType {
@@ -161,7 +168,7 @@ enum TAggregationType {
 }
 
 enum TPushType {
-    LOAD,
+    LOAD, // deprecated, it is used for old hadoop dpp load
     DELETE,
     LOAD_DELETE,
     // for spark load push request
@@ -198,7 +205,7 @@ enum TStmtType {
   QUERY,
   DDL,  // Data definition, e.g. CREATE TABLE (includes read-only functions e.g. SHOW)
   DML,  // Data modification e.g. INSERT
-  EXPLAIN   // EXPLAIN 
+  EXPLAIN   // EXPLAIN
 }
 
 // level of verboseness for "explain" output
