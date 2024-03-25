@@ -88,7 +88,13 @@ enum TPrimitiveType {
   DECIMAL64,
   DECIMAL128I,
   JSONB,
-  UNSUPPORTED
+  UNSUPPORTED,
+  VARIANT,
+  LAMBDA_FUNCTION,
+  AGG_STATE,
+  DECIMAL256,
+  IPV4,
+  IPV6
 }
 
 enum TTypeNodeType {
