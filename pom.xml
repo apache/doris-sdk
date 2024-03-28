@@ -27,7 +27,7 @@ under the License.
     <groupId>org.apache.doris</groupId>
     <artifactId>doris-sdk</artifactId>
     <packaging>pom</packaging>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.1-SNAPSHOT</version>
     <name>Archetype - doris-sdk</name>
     <url>https://doris.apache.org</url>
     <licenses>
