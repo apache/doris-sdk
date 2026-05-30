@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	dorisstreamload "github.com/wushilin/doris_go_stream_load"
+	dorisstreamload "github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load"
 )
 
 const defaultConfigPath = "benchmark_demo.conf"

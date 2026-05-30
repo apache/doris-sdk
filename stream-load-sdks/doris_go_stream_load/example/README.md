@@ -3,7 +3,7 @@
 This folder contains a deliberately minimal example program that imports:
 
 ```go
-import dorisstreamload "github.com/wushilin/doris_go_stream_load"
+import dorisstreamload "github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load"
 ```
 
 The example does not read a config file. It uses hard-coded demo data and `FakeSend=true` so you can see the API shape immediately.
@@ -39,7 +39,7 @@ go run .
 - `go.mod` includes:
 
 ```go
-replace github.com/wushilin/doris_go_stream_load => ..
+replace github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load => ..
 ```
 
 so the example uses the local checkout in this workspace.

@@ -17,16 +17,16 @@ Go `1.20` or newer.
 ## Install
 
 ```sh
-go get github.com/wushilin/doris_go_stream_load@v1.0.0
+go get github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load@v1.0.0
 ```
 
 Import path:
 
 ```go
-import dorisstreamload "github.com/wushilin/doris_go_stream_load"
+import dorisstreamload "github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load"
 ```
 
-For v1.x releases, keep the import path as `github.com/wushilin/doris_go_stream_load`; Go modules do not add `/v1` to the path.
+For v1.x releases, keep the import path as `github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load`; Go modules do not add `/v1` to the path.
 
 ## FakeSend Quick Start
 
@@ -36,7 +36,7 @@ This example is local runnable. It does not require a Doris cluster because `Fak
 mkdir dorisstreamload-quickstart
 cd dorisstreamload-quickstart
 go mod init quickstart
-go get github.com/wushilin/doris_go_stream_load@v1.0.0
+go get github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load@v1.0.0
 ```
 
 Create `main.go`:
@@ -48,7 +48,7 @@ import (
 	"fmt"
 	"time"
 
-	dorisstreamload "github.com/wushilin/doris_go_stream_load"
+	dorisstreamload "github.com/apache/doris-sdk/stream-load-sdks/doris_go_stream_load"
 )
 
 func main() {
