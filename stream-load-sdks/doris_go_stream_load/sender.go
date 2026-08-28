@@ -105,14 +105,28 @@ type streamLoadError struct {
 }
 
 func (e *streamLoadError) Error() string {
-	switch {
-	case e.Response != nil && e.Response.Status != "":
-		return fmt.Sprintf("stream load failed: http=%d status=%s message=%s", e.StatusCode, e.Response.Status, e.Response.Message)
-	case e.Message != "":
-		return fmt.Sprintf("stream load failed: http=%d message=%s", e.StatusCode, e.Message)
-	default:
-		return fmt.Sprintf("stream load failed: http=%d", e.StatusCode)
+	var b strings.Builder
+	fmt.Fprintf(&b, "stream load failed: http=%d", e.StatusCode)
+	if e.Response != nil && e.Response.Status != "" {
+		fmt.Fprintf(&b, " status=%s", e.Response.Status)
 	}
+	respMsg := ""
+	if e.Response != nil {
+		respMsg = e.Response.Message
+	}
+	switch {
+	case e.Message != "" && respMsg != "" && e.Message != respMsg:
+		// e.g. an upload-timeout error wrapping the last Doris response.
+		fmt.Fprintf(&b, " message=%s (last response: %s)", e.Message, respMsg)
+	case e.Message != "":
+		fmt.Fprintf(&b, " message=%s", e.Message)
+	case respMsg != "":
+		fmt.Fprintf(&b, " message=%s", respMsg)
+	}
+	if e.Response != nil && e.Response.ErrorURL != "" {
+		b.WriteString(", see more in " + e.Response.ErrorURL)
+	}
+	return b.String()
 }
 
 func (e *streamLoadError) Is(target error) bool {
@@ -338,46 +352,43 @@ func classifyTransportError(err error) error {
 	return &streamLoadError{StatusCode: 0, Message: err.Error(), Retriable: false, Ambiguous: true}
 }
 
+// classifyResponseError decides what to do with a stream load response that is
+// not a success. It follows the Flink connector (DorisBatchStreamLoad.load):
+// every failed load — a non-2xx HTTP status or a 2xx body whose Status is not
+// Success/Publish Timeout — is retried with a fresh label, bounded by
+// Config.MaxRetries and Config.DorisUploadTimeout.
+//
+// Doris reports almost all load failures as HTTP 200 with Status "Fail", and
+// many of them are transient: "[E-235] too many versions", "[E-238] too many
+// segments", "current running txns on db ... is larger than limit", memory
+// limit exceeded, txn/publish timeouts, no available backend, and so on. The
+// HTTP status code therefore carries no information about retriability and
+// is deliberately not consulted.
+//
+// The only outcome that is not retried immediately is "Label Already Exists"
+// with ExistingJobStatus RUNNING: the earlier request with this label is still
+// in flight, so the result is ambiguous and the label is polled instead of
+// re-sending the data. (FINISHED is treated as success by isHTTPSuccess.)
 func classifyResponseError(statusCode int, body []byte, response *StreamLoadResponse) error {
 	message := strings.TrimSpace(string(body))
 	if response != nil && response.Message != "" {
 		message = response.Message
 	}
 
-	retriable := false
-	switch {
-	case statusCode == http.StatusTooManyRequests:
-		retriable = true
-	case statusCode == http.StatusRequestTimeout:
-		retriable = true
-	case statusCode >= 500:
-		retriable = true
-	}
-
-	if response != nil {
-		switch response.Status {
-		case "Success", "Publish Timeout":
-			retriable = false
-		case "Label Already Exists":
-			retriable = false
-			return &streamLoadError{
-				StatusCode: statusCode,
-				Message:    message,
-				Retriable:  false,
-				Ambiguous:  strings.EqualFold(response.ExistingJobStatus, "RUNNING"),
-				Response:   response,
-			}
-		case "Fail":
-			if statusCode >= 500 {
-				retriable = true
-			}
+	if response != nil && response.Status == "Label Already Exists" && strings.EqualFold(response.ExistingJobStatus, "RUNNING") {
+		return &streamLoadError{
+			StatusCode: statusCode,
+			Message:    message,
+			Retriable:  false,
+			Ambiguous:  true,
+			Response:   response,
 		}
 	}
 
 	return &streamLoadError{
 		StatusCode: statusCode,
 		Message:    message,
-		Retriable:  retriable,
+		Retriable:  true,
 		Response:   response,
 	}
 }
