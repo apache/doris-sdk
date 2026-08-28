@@ -473,6 +473,19 @@ func (c *Client) runWorker(id int) {
 	}
 }
 
+// deliverBatch sends one batch to Doris and drives the retry loop. The retry
+// policy mirrors the Flink connector's DorisBatchStreamLoad.load():
+//
+//   - every failed load is retried, at most Config.MaxRetries times
+//     (MaxRetries+1 attempts in total), with a linear-ish backoff;
+//   - each retry uses a fresh label, <label>_<attempt>, because the failed
+//     attempt may have registered the previous label in Doris;
+//   - retrying also stops once Config.DorisUploadTimeout has elapsed.
+//
+// Unlike the Flink connector, an outcome that is ambiguous (the request may
+// have been applied but the response was lost, or the label is still RUNNING)
+// is resolved by polling the label state first; only ABORTED/UNKNOWN labels
+// are retried so that data is never loaded twice.
 func (c *Client) deliverBatch(batch *deliveryBatch) {
 	var (
 		outcome sendOutcome
@@ -481,43 +494,55 @@ func (c *Client) deliverBatch(batch *deliveryBatch) {
 
 	started := time.Now()
 	attempts := 0
+	maxRetries := c.cfg.maxRetries()
+	baseLabel := batch.label
 	var retryDeadline time.Time
+
+	fail := func(err error) {
+		c.completeBatch(batch, DeliveryResult{
+			Err:        err,
+			Attempts:   attempts,
+			StatusCode: outcome.statusCode,
+			Response:   outcome.response,
+			StartedAt:  started,
+			FinishedAt: time.Now(),
+		})
+	}
+	uploadTimeoutErr := func() error {
+		return &streamLoadError{
+			StatusCode: outcome.statusCode,
+			Message:    fmt.Sprintf("upload did not conclude within doris upload timeout %s", c.cfg.DorisUploadTimeout),
+			Response:   outcome.response,
+		}
+	}
 
 	for {
 		if attempts > 0 && !retryDeadline.IsZero() && time.Now().After(retryDeadline) {
-			result := DeliveryResult{
-				Err:        &streamLoadError{StatusCode: outcome.statusCode, Message: fmt.Sprintf("upload did not conclude within doris upload timeout %s", c.cfg.DorisUploadTimeout)},
-				Attempts:   attempts,
-				StatusCode: outcome.statusCode,
-				Response:   outcome.response,
-				StartedAt:  started,
-				FinishedAt: time.Now(),
-			}
-			c.completeBatch(batch, result)
+			fail(uploadTimeoutErr())
 			return
 		}
 
 		attempts++
 		c.stats.recordUploadAttempt(batch.byteSize, batch.len())
+		c.logf(LogLevelDebug, "stream load started: label=%s attempt=%d", batch.label, attempts)
 		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.DorisUploadRequestTimeout)
 		outcome, err = c.sender.Send(ctx, batch)
 		cancel()
 
 		if err == nil {
-			result := DeliveryResult{
+			c.completeBatch(batch, DeliveryResult{
 				Attempts:   attempts,
 				StatusCode: outcome.statusCode,
 				Response:   outcome.response,
 				StartedAt:  started,
 				FinishedAt: time.Now(),
-			}
-			c.completeBatch(batch, result)
+			})
 			return
 		}
 
 		retriable := isRetriable(err)
 		ambiguous := isAmbiguous(err)
-		c.logf(LogLevelDebug, "send error: attempts=%d retriable=%t err=%v", attempts, retriable, err)
+		c.logf(LogLevelDebug, "send error: label=%s attempts=%d retriable=%t ambiguous=%t err=%v", batch.label, attempts, retriable, ambiguous, err)
 		if ambiguous {
 			pollResult, pollErr := c.pollLabelUntilConclusion(batch.label, started, attempts)
 			if pollErr == nil {
@@ -526,22 +551,14 @@ func (c *Client) deliverBatch(batch *deliveryBatch) {
 			}
 			err = pollErr
 			retriable = isRetriable(pollErr)
-			if retriable {
-				// Generate a fresh label: the old one is now registered in Doris
-				// (as ABORTED) and cannot be reused.
-				batch.label = generateLabel(c.cfg.LabelPrefix)
-			}
 		}
 		if !retriable {
-			result := DeliveryResult{
-				Err:        err,
-				Attempts:   attempts,
-				StatusCode: outcome.statusCode,
-				Response:   outcome.response,
-				StartedAt:  started,
-				FinishedAt: time.Now(),
-			}
-			c.completeBatch(batch, result)
+			fail(err)
+			return
+		}
+		if attempts > maxRetries {
+			c.logf(LogLevelError, "stream load failed: label=%s attempts=%d max_retries=%d, giving up: %v", batch.label, attempts, maxRetries, err)
+			fail(err)
 			return
 		}
 
@@ -549,15 +566,7 @@ func (c *Client) deliverBatch(batch *deliveryBatch) {
 			retryDeadline = time.Now().Add(c.cfg.DorisUploadTimeout)
 		}
 		if time.Now().After(retryDeadline) {
-			result := DeliveryResult{
-				Err:        &streamLoadError{StatusCode: outcome.statusCode, Message: fmt.Sprintf("upload did not conclude within doris upload timeout %s", c.cfg.DorisUploadTimeout)},
-				Attempts:   attempts,
-				StatusCode: outcome.statusCode,
-				Response:   outcome.response,
-				StartedAt:  started,
-				FinishedAt: time.Now(),
-			}
-			c.completeBatch(batch, result)
+			fail(uploadTimeoutErr())
 			return
 		}
 
@@ -565,7 +574,11 @@ func (c *Client) deliverBatch(batch *deliveryBatch) {
 		if remaining := time.Until(retryDeadline); backoff > remaining {
 			backoff = remaining
 		}
-		c.logf(LogLevelDebug, "retry scheduled: attempts=%d backoff=%s", attempts, backoff)
+		// Retry with a fresh label (<label>_<attempt>), exactly like the Flink
+		// connector: the failed attempt may have registered the old label in
+		// Doris, and re-using it would surface as "Label Already Exists".
+		batch.label = fmt.Sprintf("%s_%d", baseLabel, attempts)
+		c.logf(LogLevelInfo, "stream load failed, to retry: attempt=%d/%d next_label=%s backoff=%s err=%v", attempts, maxRetries+1, batch.label, backoff, err)
 		time.Sleep(backoff)
 	}
 }

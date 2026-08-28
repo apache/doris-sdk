@@ -30,6 +30,7 @@ type LoaderConfig struct {
 
 	DorisUploadTimeout        string `json:"doris_upload_timeout,omitempty"`
 	DorisUploadRequestTimeout string `json:"doris_upload_request_timeout,omitempty"`
+	MaxRetries                int    `json:"max_retries,omitempty"`
 	CallbackTimeout           string `json:"callback_timeout,omitempty"`
 	SlowCallbackWarn          string `json:"slow_callback_warn,omitempty"`
 	LabelPrefix               string `json:"label_prefix,omitempty"`
@@ -89,6 +90,7 @@ func LoaderConfigFromConfig(cfg Config) LoaderConfig {
 		Validation:                cfg.Validation,
 		DorisUploadTimeout:        formatDuration(cfg.DorisUploadTimeout),
 		DorisUploadRequestTimeout: formatDuration(cfg.DorisUploadRequestTimeout),
+		MaxRetries:                cfg.MaxRetries,
 		CallbackTimeout:           formatDuration(cfg.CallbackTimeout),
 		SlowCallbackWarn:          formatDuration(cfg.SlowCallbackWarn),
 		LabelPrefix:               cfg.LabelPrefix,
@@ -120,6 +122,7 @@ func (lc LoaderConfig) Config() (Config, error) {
 		MaxUploadQueueSize:  lc.MaxUploadQueueSize,
 		BatchBytes:          lc.BatchBytes,
 		DorisUploadWorkers:  lc.DorisUploadWorkers,
+		MaxRetries:          lc.MaxRetries,
 		Validation:          lc.Validation,
 		LabelPrefix:         lc.LabelPrefix,
 		CSVSeparator:        lc.CSVSeparator,

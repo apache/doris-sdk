@@ -21,6 +21,7 @@ const (
 	defaultMaxUploadQueueSize        = 1
 	defaultBatchBytes                = maxBatchBytes
 	defaultDorisUploadWorkers        = 1
+	defaultMaxRetries                = 3
 	defaultLinger                    = 5 * time.Millisecond
 	defaultDorisUploadTimeout        = 300 * time.Second
 	defaultDorisUploadRequestTimeout = 300 * time.Second
@@ -93,13 +94,20 @@ type Config struct {
 
 	DorisUploadTimeout        time.Duration
 	DorisUploadRequestTimeout time.Duration
-	CallbackTimeout           time.Duration
-	SlowCallbackWarn          time.Duration
-	LabelPrefix               string
-	StatusPollTimeout         time.Duration
-	FakeSend                  bool
-	FakeSendDelay             time.Duration
-	FakeSendDelaySet          bool
+	// MaxRetries is the number of additional upload attempts made after a
+	// failed stream load before the batch is reported as failed, so a batch is
+	// sent at most MaxRetries+1 times. Every retry uses a fresh label
+	// (<label>_<attempt>). This mirrors the Flink connector's sink.max-retries
+	// (default 3). Zero selects the default; a negative value disables retries.
+	// DorisUploadTimeout still bounds the total time spent retrying.
+	MaxRetries        int
+	CallbackTimeout   time.Duration
+	SlowCallbackWarn  time.Duration
+	LabelPrefix       string
+	StatusPollTimeout time.Duration
+	FakeSend          bool
+	FakeSendDelay     time.Duration
+	FakeSendDelaySet  bool
 
 	CSVSeparator string
 	CSVQuote     string
@@ -138,6 +146,9 @@ func (c Config) withDefaults() Config {
 	if c.DorisUploadRequestTimeout == 0 {
 		c.DorisUploadRequestTimeout = defaultDorisUploadRequestTimeout
 	}
+	if c.MaxRetries == 0 {
+		c.MaxRetries = defaultMaxRetries
+	}
 	if c.CallbackTimeout <= 0 {
 		c.CallbackTimeout = defaultCallbackTimeout
 	}
@@ -175,6 +186,14 @@ func (c Config) withDefaults() Config {
 		c.Headers = make(http.Header)
 	}
 	return c
+}
+
+// maxRetries returns the effective retry count: negative values disable retries.
+func (c Config) maxRetries() int {
+	if c.MaxRetries < 0 {
+		return 0
+	}
+	return c.MaxRetries
 }
 
 func (c Config) validate() error {

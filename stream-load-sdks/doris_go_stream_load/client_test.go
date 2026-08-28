@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/big"
@@ -1622,10 +1623,9 @@ func TestDialFailureRetriesWithoutPolling(t *testing.T) {
 	if got := sender.PollCalls(); got != 0 {
 		t.Fatalf("poll calls = %d, want 0 (dial failure must not trigger polling)", got)
 	}
-	labels := sender.Labels()
-	if labels[0] != labels[1] {
-		t.Fatalf("labels differ on dial failure retry: %q != %q, want same label (label was never registered)", labels[0], labels[1])
-	}
+	// Every retry uses <label>_<attempt>, like the Flink connector, even when
+	// the previous label was never registered.
+	assertRetryLabels(t, sender.Labels())
 }
 
 func TestLabelAlreadyExistsFinishedTreatedAsSuccess(t *testing.T) {
@@ -1871,22 +1871,29 @@ func TestClassifyResponseError(t *testing.T) {
 		wantRetriable bool
 		wantAmbiguous bool
 	}{
-		// HTTP code classification (no response body)
+		// Like the Flink connector, every non-2xx HTTP status is retried
+		// (bounded by MaxRetries), regardless of the code.
 		{"HTTP 500", 500, nil, true, false},
 		{"HTTP 503", 503, nil, true, false},
 		{"HTTP 429", 429, nil, true, false},
 		{"HTTP 408", 408, nil, true, false},
-		{"HTTP 400", 400, nil, false, false},
-		{"HTTP 401", 401, nil, false, false},
-		{"HTTP 403", 403, nil, false, false},
-		{"HTTP 404", 404, nil, false, false},
-		// Status Fail with various HTTP codes
-		{"Fail 200 not retriable", 200, &StreamLoadResponse{Status: "Fail"}, false, false},
+		{"HTTP 400", 400, nil, true, false},
+		{"HTTP 401", 401, nil, true, false},
+		{"HTTP 403", 403, nil, true, false},
+		{"HTTP 404", 404, nil, true, false},
+		// Doris reports load failures as HTTP 200 + Status Fail. These include
+		// transient errors (too many versions, txn limit, memory limit, ...)
+		// and must be retried with a fresh label.
+		{"Fail 200 retriable", 200, &StreamLoadResponse{Status: "Fail"}, true, false},
+		{"Fail 200 too many versions retriable", 200, &StreamLoadResponse{Status: "Fail", Message: "[INTERNAL_ERROR]tablet error: [E-235]failed to init rowset builder. version count: 2001, exceed limit: 2000"}, true, false},
+		{"Fail 200 txn limit retriable", 200, &StreamLoadResponse{Status: "Fail", Message: "current running txns on db 10003 is 1000, larger than limit 1000"}, true, false},
 		{"Fail 500 retriable", 500, &StreamLoadResponse{Status: "Fail"}, true, false},
-		// Label Already Exists
+		{"unknown status retriable", 200, &StreamLoadResponse{Status: "Whatever"}, true, false},
+		// Label Already Exists: RUNNING is ambiguous (poll the label); anything
+		// else that is not FINISHED is retried with a fresh label.
 		{"Label Already Exists RUNNING ambiguous", 200, &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: "RUNNING"}, false, true},
-		{"Label Already Exists other not ambiguous", 200, &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: "OTHER"}, false, false},
-		{"Label Already Exists empty not ambiguous", 200, &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: ""}, false, false},
+		{"Label Already Exists other retriable", 200, &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: "OTHER"}, true, false},
+		{"Label Already Exists empty retriable", 200, &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: ""}, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2027,14 +2034,19 @@ func TestLabelAlreadyExistsRunningTriggersPolling(t *testing.T) {
 	}
 }
 
-func TestLabelAlreadyExistsUnknownExistingStatusFails(t *testing.T) {
-	// An ExistingJobStatus that is neither RUNNING nor FINISHED is a permanent failure.
+func TestLabelAlreadyExistsUnknownExistingStatusRetriesWithFreshLabel(t *testing.T) {
+	withTestUploadRetryBackoff(t, time.Millisecond, 2*time.Millisecond)
+	// An ExistingJobStatus that is neither RUNNING nor FINISHED is not ambiguous:
+	// like the Flink connector, retry with a fresh label (no polling) until
+	// MaxRetries is exhausted.
+	response := &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: ""}
 	sender := &fakeSender{
 		outcomes: []fakeOutcome{
-			{
-				outcome: sendOutcome{statusCode: 200, response: &StreamLoadResponse{Status: "Label Already Exists", ExistingJobStatus: ""}},
-				err:     &streamLoadError{StatusCode: 200, Message: "label already exists", Retriable: false, Ambiguous: false},
-			},
+			{outcome: sendOutcome{statusCode: 200, response: response}, err: classifyResponseError(200, nil, response)},
+			{outcome: sendOutcome{statusCode: 200, response: response}, err: classifyResponseError(200, nil, response)},
+			{outcome: sendOutcome{statusCode: 200, response: response}, err: classifyResponseError(200, nil, response)},
+			{outcome: sendOutcome{statusCode: 200, response: response}, err: classifyResponseError(200, nil, response)},
+			{outcome: sendOutcome{statusCode: 200, response: response}, err: classifyResponseError(200, nil, response)},
 		},
 	}
 	client := newTestClient(t, sender, Config{
@@ -2054,13 +2066,244 @@ func TestLabelAlreadyExistsUnknownExistingStatusFails(t *testing.T) {
 	}
 	result := handle.Wait()
 	if result.Err == nil {
-		t.Fatal("Wait() error = nil, want failure for Label Already Exists with unknown ExistingJobStatus")
+		t.Fatal("Wait() error = nil, want failure once retries are exhausted")
 	}
 	if got := sender.PollCalls(); got != 0 {
 		t.Fatalf("poll calls = %d, want 0 (non-ambiguous, must not poll)", got)
 	}
+	if got := sender.Attempts(); got != defaultMaxRetries+1 {
+		t.Fatalf("sender attempts = %d, want %d (initial + MaxRetries)", got, defaultMaxRetries+1)
+	}
+	assertRetryLabels(t, sender.Labels())
+}
+
+// assertRetryLabels checks that retries used <base>_<attempt> labels like the
+// Flink connector (label + "_" + retry).
+func assertRetryLabels(t *testing.T, labels []string) {
+	t.Helper()
+	if len(labels) == 0 {
+		t.Fatal("no labels recorded")
+	}
+	for i := 1; i < len(labels); i++ {
+		want := fmt.Sprintf("%s_%d", labels[0], i)
+		if labels[i] != want {
+			t.Fatalf("labels[%d] = %q, want %q", i, labels[i], want)
+		}
+	}
+}
+
+func TestFailStatusRetriedWithFreshLabel(t *testing.T) {
+	withTestUploadRetryBackoff(t, time.Millisecond, 2*time.Millisecond)
+	// Doris reports "too many versions" (and most other transient failures) as
+	// HTTP 200 + Status Fail. The Flink connector retries these with a new
+	// label; so must we.
+	failResponse := &StreamLoadResponse{
+		Status:  "Fail",
+		Message: "[INTERNAL_ERROR]tablet error: [E-235]failed to init rowset builder. version count: 2001, exceed limit: 2000. tablet: 10042",
+	}
+	sender := &fakeSender{
+		outcomes: []fakeOutcome{
+			{outcome: sendOutcome{statusCode: 200, response: failResponse}, err: classifyResponseError(200, nil, failResponse)},
+			{outcome: sendOutcome{statusCode: 200, response: failResponse}, err: classifyResponseError(200, nil, failResponse)},
+			{outcome: sendOutcome{statusCode: 200, response: &StreamLoadResponse{Status: "Success"}}},
+		},
+	}
+	client := newTestClient(t, sender, Config{
+		StreamLoadURL:      "http://example.invalid/api/db/table/_stream_load",
+		Columns:            []string{"c1"},
+		Mode:               ModeCSV,
+		Linger:             10 * time.Millisecond,
+		DorisUploadWorkers: 1,
+		MaxUploadQueueSize: 8,
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	defer client.Close()
+
+	handle, err := client.SendRecord("a")
+	if err != nil {
+		t.Fatalf("SendRecord() error = %v", err)
+	}
+	result := handle.Wait()
+	if result.Err != nil {
+		t.Fatalf("Wait() error = %v, want success after retrying Status Fail", result.Err)
+	}
+	if result.Attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", result.Attempts)
+	}
+	if got := sender.PollCalls(); got != 0 {
+		t.Fatalf("poll calls = %d, want 0", got)
+	}
+	assertRetryLabels(t, sender.Labels())
+}
+
+func TestMaxRetriesBoundsAttempts(t *testing.T) {
+	withTestUploadRetryBackoff(t, time.Millisecond, 2*time.Millisecond)
+	failResponse := &StreamLoadResponse{Status: "Fail", Message: "current running txns on db 10003 is 1000, larger than limit 1000"}
+	var outcomes []fakeOutcome
+	for i := 0; i < 10; i++ {
+		outcomes = append(outcomes, fakeOutcome{outcome: sendOutcome{statusCode: 200, response: failResponse}, err: classifyResponseError(200, nil, failResponse)})
+	}
+	sender := &fakeSender{outcomes: outcomes}
+	client := newTestClient(t, sender, Config{
+		StreamLoadURL:      "http://example.invalid/api/db/table/_stream_load",
+		Columns:            []string{"c1"},
+		Mode:               ModeCSV,
+		Linger:             10 * time.Millisecond,
+		DorisUploadWorkers: 1,
+		MaxRetries:         2,
+		MaxUploadQueueSize: 8,
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	defer client.Close()
+
+	handle, err := client.SendRecord("a")
+	if err != nil {
+		t.Fatalf("SendRecord() error = %v", err)
+	}
+	result := handle.Wait()
+	if result.Err == nil {
+		t.Fatal("Wait() error = nil, want failure after MaxRetries")
+	}
+	if result.Attempts != 3 {
+		t.Fatalf("attempts = %d, want 3 (initial + 2 retries)", result.Attempts)
+	}
+	if got := sender.Attempts(); got != 3 {
+		t.Fatalf("sender attempts = %d, want 3", got)
+	}
+	if result.Response == nil || result.Response.Status != "Fail" {
+		t.Fatalf("result.Response = %#v, want last Doris Fail response", result.Response)
+	}
+	if !strings.Contains(result.Err.Error(), "larger than limit") {
+		t.Fatalf("result.Err = %v, want last Doris message", result.Err)
+	}
+	assertRetryLabels(t, sender.Labels())
+}
+
+func TestNegativeMaxRetriesDisablesRetry(t *testing.T) {
+	failResponse := &StreamLoadResponse{Status: "Fail", Message: "boom"}
+	sender := &fakeSender{
+		outcomes: []fakeOutcome{
+			{outcome: sendOutcome{statusCode: 200, response: failResponse}, err: classifyResponseError(200, nil, failResponse)},
+		},
+	}
+	client := newTestClient(t, sender, Config{
+		StreamLoadURL:      "http://example.invalid/api/db/table/_stream_load",
+		Columns:            []string{"c1"},
+		Mode:               ModeCSV,
+		Linger:             10 * time.Millisecond,
+		DorisUploadWorkers: 1,
+		MaxRetries:         -1,
+		MaxUploadQueueSize: 8,
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	defer client.Close()
+
+	handle, err := client.SendRecord("a")
+	if err != nil {
+		t.Fatalf("SendRecord() error = %v", err)
+	}
+	result := handle.Wait()
+	if result.Err == nil {
+		t.Fatal("Wait() error = nil, want failure")
+	}
 	if got := sender.Attempts(); got != 1 {
-		t.Fatalf("sender attempts = %d, want 1 (permanent failure, must not retry)", got)
+		t.Fatalf("sender attempts = %d, want 1 (retries disabled)", got)
+	}
+}
+
+func TestMaxRetriesAlsoBoundsAbortedPollRetries(t *testing.T) {
+	withTestPollBackoff(t, time.Millisecond, 2*time.Millisecond)
+	withTestUploadRetryBackoff(t, time.Millisecond, 2*time.Millisecond)
+	// Ambiguous send -> ABORTED poll is a retry like any other and counts
+	// against MaxRetries.
+	var outcomes []fakeOutcome
+	var polls []fakePollResponse
+	for i := 0; i < 10; i++ {
+		outcomes = append(outcomes, fakeOutcome{err: &streamLoadError{Message: "timeout", Ambiguous: true}})
+		polls = append(polls, fakePollResponse{state: loadStateResponse{StatusCode: 200, State: "ABORTED"}})
+	}
+	sender := &fakeSender{outcomes: outcomes, pollResponses: polls}
+	client := newTestClient(t, sender, Config{
+		StreamLoadURL:      "http://example.invalid/api/db/table/_stream_load",
+		Columns:            []string{"c1"},
+		Mode:               ModeCSV,
+		Linger:             10 * time.Millisecond,
+		DorisUploadWorkers: 1,
+		MaxRetries:         1,
+		MaxUploadQueueSize: 8,
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	defer client.Close()
+
+	handle, err := client.SendRecord("a")
+	if err != nil {
+		t.Fatalf("SendRecord() error = %v", err)
+	}
+	result := handle.Wait()
+	if result.Err == nil {
+		t.Fatal("Wait() error = nil, want failure after MaxRetries")
+	}
+	if got := sender.Attempts(); got != 2 {
+		t.Fatalf("sender attempts = %d, want 2 (initial + 1 retry)", got)
+	}
+	if got := sender.PollCalls(); got != 2 {
+		t.Fatalf("poll calls = %d, want 2", got)
+	}
+	assertRetryLabels(t, sender.Labels())
+}
+
+func TestHTTPSenderRetriesStatusFailWithFreshLabel(t *testing.T) {
+	withTestUploadRetryBackoff(t, time.Millisecond, 2*time.Millisecond)
+	// End-to-end through the real httpSender: Doris answers HTTP 200 with
+	// Status Fail (too many versions), then succeeds. The retry must carry a
+	// new label header.
+	transport := &sequentialTransport{
+		responses: []*http.Response{
+			{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"TxnId":1,"Label":"x","Status":"Fail","Message":"[INTERNAL_ERROR]tablet error: [E-235]failed to init rowset builder. version count: 2001, exceed limit: 2000"}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"TxnId":2,"Label":"x_1","Status":"Success","NumberLoadedRows":1}`)),
+			},
+		},
+	}
+	client, err := NewClient(Config{
+		StreamLoadURL:      "http://example.invalid/api/db/table/_stream_load",
+		Columns:            []string{"c1"},
+		Mode:               ModeCSV,
+		Linger:             10 * time.Millisecond,
+		DorisUploadWorkers: 1,
+		MaxUploadQueueSize: 8,
+		Logger:             log.New(io.Discard, "", 0),
+		HTTPClient:         &http.Client{Transport: transport, Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	defer client.Close()
+
+	handle, err := client.SendRecord("a")
+	if err != nil {
+		t.Fatalf("SendRecord() error = %v", err)
+	}
+	result := handle.Wait()
+	if result.Err != nil {
+		t.Fatalf("Wait() error = %v, want success after retry", result.Err)
+	}
+	if result.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", result.Attempts)
+	}
+	requests := transport.AllRequests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
+	}
+	first, second := requests[0].Header.Get("label"), requests[1].Header.Get("label")
+	if first == "" || second != first+"_1" {
+		t.Fatalf("labels = %q, %q; want second label = first + \"_1\"", first, second)
 	}
 }
 

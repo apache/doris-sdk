@@ -304,6 +304,7 @@ Retry and timing:
 |---|---|---|
 | `DorisUploadRequestTimeout` | `300s` | HTTP deadline for one upload or label-poll request; minimum `10s` |
 | `DorisUploadTimeout` | `300s` | Total retry decision budget after retriable upload outcomes |
+| `MaxRetries` | `3` | Max retries per batch after a failed stream load (`MaxRetries+1` attempts in total); `-1` disables retries. Same semantics as the Flink connector's `sink.max-retries` |
 | `StatusPollTimeout` | `300s` | Max time spent polling a label after an ambiguous outcome |
 | `CallbackTimeout` | `100ms` | Reserved callback timing budget in config |
 | `SlowCallbackWarn` | `10ms` | Slow callback warning threshold |
@@ -356,12 +357,24 @@ Delivery can fail after queue admission; check `DeliveryResult.Err` from the han
 
 | Failure | Meaning | Typical action |
 |---|---|---|
-| HTTP 4xx from Doris | Bad URL, auth, table, schema, label, or data format | Inspect `StatusCode` and Doris response message |
-| HTTP 5xx or retriable transport error | Doris/BE/network may be unavailable | The SDK retries within `DorisUploadTimeout`; check cluster health |
-| ambiguous transport error | Request may have reached Doris but response was lost | The SDK polls the load label to decide whether it became visible |
-| label state `UNKNOWN` | Doris does not know the label | The transaction was not registered; final result is failure |
-| status poll timeout | Doris did not reach a final visible/failed state in time | Increase `StatusPollTimeout` or inspect Doris load jobs |
+| HTTP 200 with `Status: Fail` | Doris rejected the load. Transient causes include `[E-235] too many versions`, `[E-238] too many segments`, `current running txns on db ... larger than limit`, memory limit exceeded, txn/publish timeouts; permanent causes include schema/data-quality errors | Retried up to `MaxRetries` times with a fresh label; inspect `Response.Message` / `ErrorURL` if it still fails |
+| non-2xx HTTP status | Bad URL, auth, table, proxy/FE/BE unavailable | Retried up to `MaxRetries` times; inspect `StatusCode` and Doris response message |
+| connection refused / dial error | Request never reached Doris | Retried up to `MaxRetries` times (no polling needed) |
+| ambiguous transport error, or `Label Already Exists` with `ExistingJobStatus: RUNNING` | Request may have reached Doris but the response was lost | The SDK polls the load label: `VISIBLE`/`COMMITTED` is success, `ABORTED`/`UNKNOWN` is retried with a fresh label |
+| status poll timeout | Doris did not reach a final visible/failed state in time | Final result is failure (never retried, to avoid loading twice); increase `StatusPollTimeout` or inspect Doris load jobs |
+| `upload did not conclude within doris upload timeout` | `DorisUploadTimeout` elapsed while retrying | Raise `DorisUploadTimeout` or fix the underlying error |
 | callback too slow | Callback exceeded `SlowCallbackWarn` and produced an info log | Keep callbacks small; hand work to another goroutine if needed |
+
+### Retry policy
+
+The retry policy mirrors the Apache Doris Flink connector (`DorisBatchStreamLoad.load`):
+
+- Every failed stream load is retried, whatever the HTTP status or Doris `Status`/`Message`. Doris reports nearly all load failures as HTTP 200 + `Status: Fail`, and many of them (`[E-235] too many versions`, txn limit, memory limit, timeouts) are transient, so the SDK does not try to guess which messages are permanent.
+- A batch is attempted at most `MaxRetries + 1` times (default 3 retries, like `sink.max-retries`), and never beyond `DorisUploadTimeout`.
+- Each retry uses a fresh label `<label>_<attempt>` (`..._1`, `..._2`, ...), exactly like the Flink connector's `label + "_" + retry`.
+- Backoff between retries starts at 1s and doubles up to 4s.
+- `Success` and `Publish Timeout` are success; `Label Already Exists` with `ExistingJobStatus: FINISHED` is success.
+- Unlike the Flink connector, an outcome that is *ambiguous* (timeout or connection drop after the request was sent, or `Label Already Exists` with `RUNNING`) is resolved by polling `get_load_state` first, so data is never loaded twice.
 
 ## Shutdown
 

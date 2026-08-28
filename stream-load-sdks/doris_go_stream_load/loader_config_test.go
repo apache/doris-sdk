@@ -18,6 +18,7 @@ func TestLoaderConfigConvertsToRuntimeConfig(t *testing.T) {
 		MaxQueueWaitTime:          "2s",
 		DorisUploadTimeout:        "100s",
 		DorisUploadRequestTimeout: "30s",
+		MaxRetries:                5,
 		FakeSend:                  true,
 		FakeSendDelay:             "500ms",
 		Validation:                ValidateSyntax,
@@ -42,6 +43,9 @@ func TestLoaderConfigConvertsToRuntimeConfig(t *testing.T) {
 	}
 	if cfg.DorisUploadRequestTimeout != 30*time.Second {
 		t.Fatalf("DorisUploadRequestTimeout = %s, want 30s", cfg.DorisUploadRequestTimeout)
+	}
+	if cfg.MaxRetries != 5 {
+		t.Fatalf("MaxRetries = %d, want 5", cfg.MaxRetries)
 	}
 	if !cfg.FakeSend {
 		t.Fatal("FakeSend = false, want true")
