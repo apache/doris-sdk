@@ -28,7 +28,7 @@ under the License.
     <artifactId>thrift-service</artifactId>
 
     <properties>
-        <libthrift.version>0.16.0</libthrift.version>
+        <libthrift.version>0.24.0</libthrift.version>
     </properties>
 
     <dependencies>
