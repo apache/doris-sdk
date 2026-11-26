@@ -43,6 +43,60 @@ github:
     merge:   false
     rebase:  false
 
+  rulesets:
+    - name: Default Branch Protection
+      target: branch
+      enforcement: active
+      conditions:
+        ref_name:
+          include:
+            - "~DEFAULT_BRANCH"
+            - "refs/heads/*-release"
+            - "refs/heads/release/**/*"
+            - "refs/heads/rel/**/*"
+          exclude: []
+      bypass_actors: []
+      rules:
+        - type: deletion
+        - type: non_fast_forward
+        - type: pull_request
+          parameters:
+            required_approving_review_count: 1
+            dismiss_stale_reviews_on_push: true
+            require_code_owner_review: true
+            require_last_push_approval: false
+            required_review_thread_resolution: true
+
+    # The required checks are available on the default branch. Existing release
+    # branches need the workflow updates before they can require these checks.
+    - name: Default Branch CI
+      type: branch
+      restrict_deletion: false
+      restrict_force_push: false
+      required_status_checks:
+        - name: License header
+          app_slug: 15368 # GitHub Actions
+        - name: Build Extensions
+          app_slug: 15368
+        - name: Go SDK tests
+          app_slug: 15368
+
+    - name: Release Tag Protection
+      target: tag
+      enforcement: active
+      conditions:
+        ref_name:
+          include:
+            - "refs/tags/[0-9]*.[0-9]*.[0-9]*"
+            - "refs/tags/doris-sdk-[0-9]*.[0-9]*.[0-9]*"
+          exclude:
+            - "refs/tags/[0-9]*[A-Za-z+_-]*"
+            - "refs/tags/doris-sdk-[0-9]*[A-Za-z+_-]*"
+      bypass_actors: []
+      rules:
+        - type: deletion
+        - type: update
+
 notifications:
     pullrequests_status:  commits@doris.apache.org
 

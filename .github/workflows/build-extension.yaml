@@ -21,29 +21,61 @@ on:
   pull_request:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   build-extension:
-    name: "Build Extensions"
+    name: Build Extensions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '8'
+          overwrite-settings: false
+
+      - name: Build Apache Thrift compiler
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        env:
+          THRIFT_VERSION: '0.24.0'
+          THRIFT_SHA256: e0fa5839a4c5c1d631b0931cf2c554ebbfa4e2fee3a9fb3ffd4f82ce4396c6e4
+        run: |
+          archive="thrift-${THRIFT_VERSION}.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --retry 3 \
+            --output "$archive" "https://archive.apache.org/dist/thrift/${THRIFT_VERSION}/${archive}"
+          printf '%s  %s\n' "$THRIFT_SHA256" "$archive" | sha256sum --check
+          tar -xzf "$archive"
+          cmake -S "thrift-${THRIFT_VERSION}" -B thrift-build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_LIBRARIES=OFF -DBUILD_TESTING=OFF -DBUILD_TUTORIALS=OFF
+          cmake --build thrift-build --parallel 2 --target thrift-compiler
+
+      - name: Build Java Thrift SDK
+        working-directory: thrift-service
+        run: mvn --batch-mode --no-transfer-progress -Dthrift.binary="$RUNNER_TEMP/thrift-build/compiler/cpp/bin/thrift" clean package
+
+  test-go:
+    name: Go SDK tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
-        shell: bash
+        working-directory: stream-load-sdks/doris_go_stream_load
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
-
-      - name: Setup java
-        uses: actions/setup-java@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          distribution: adopt
-          java-version: '8'
-
-      - name: Setup Apache Thrift Compiler
-        run: |
-          wget http://archive.ubuntu.com/ubuntu/pool/universe/t/thrift/thrift-compiler_0.16.0-2_amd64.deb
-          sudo dpkg -i thrift-compiler_0.16.0-2_amd64.deb
-          thrift --version
-
-      - name: Build Doris SDK
-        run: |
-          cd thrift-service && mvn clean package
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Test Go SDK
+        run: go test -mod=readonly ./...
+      - name: Build Go SDK example
+        working-directory: stream-load-sdks/doris_go_stream_load/example
+        run: go test -mod=readonly ./...

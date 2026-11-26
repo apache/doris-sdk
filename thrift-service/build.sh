@@ -115,7 +115,7 @@ if [[ -f ${DORIS_HOME}/custom_env.sh ]]; then
 fi
 
 echo_g " build starting..."
-${MVN_BIN} clean package -Dthrift.binary=${THRIFT_BIN} "$@"
+"$MVN_BIN" clean package -Dthrift.binary="$THRIFT_BIN" "$@"
 
 
 EXIT_CODE=$?
