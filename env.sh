@@ -41,18 +41,17 @@ thrift_failed() {
     echo "For example: "
     echo "    THRIFT_BIN=/path/to/thrift/bin/thrift"
     echo ""
-    echo "You can install thrift@v0.16.0 by yourself, or if you have compiled the Doris core source file,"
-    echo "there is thrift in 'thirdparty/installed/bin/'"
+    echo "Install the Apache Thrift 0.24.0 compiler. See README.md for build instructions."
     exit 1
 }
 
 # check thrift
-[ -z "$THRIFT_BIN" ] && export THRIFT_BIN=$(which thrift)
-$THRIFT_BIN --version >/dev/null 2>&1
-[ $? -eq 127 ] && thrift_failed
-THRIFT_VER=$($THRIFT_BIN --version | awk '{print $3}')
-if [ x"${THRIFT_VER}" != x"0.16.0" ]; then
-    echo "oh, thrift version must be v0.16.0, please reinstall thrift@v0.16.0"
+export THRIFT_BIN="${THRIFT_BIN:-$(command -v thrift)}"
+if ! thrift_version=$("$THRIFT_BIN" --version 2>/dev/null); then
+    thrift_failed
+fi
+if [[ "$thrift_version" != "Thrift version 0.24.0" ]]; then
+    echo "Expected Apache Thrift 0.24.0, found $thrift_version"
     exit 1
 fi
 

@@ -20,20 +20,24 @@ name: License
 on:
   push:
   pull_request:
-    branches:
-      - main
-    paths-ignore:
-      - '**/*.md'
+
+permissions:
+  contents: read
 
 jobs:
   license-header:
-    if: github.repository == 'apache/doris-sdk'
     name: License header
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.27.x'
+          cache: false
       - name: Check license header
-        uses: apache/skywalking-eyes@main
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/apache/skywalking-eyes/cmd/license-eye@v0.9.0
+          "$RUNNER_TEMP/bin/license-eye" header check

@@ -23,58 +23,29 @@ This repository contains the sdk for the [Apache Doris](https://doris.apache.org
 
 ## Build and Install
 
-Ready to work
+Build the Java Thrift SDK with JDK 8 or later, Maven, and the Apache Thrift
+0.24.0 compiler. The compiler version must match the Java library version in
+`thrift-service/pom.xml`.
 
-1.Modify the `custom_env.sh.tpl` file and rename it to `custom_env.sh`
-
-2.Specify the thrift installation directory
+Download the compiler source or the Windows executable from the Apache archive
+and verify the corresponding SHA-256 checksum before use. On Linux and macOS,
+install CMake, a C++ compiler, Flex and a recent Bison, then build from the
+extracted archive. [Apache Thrift 0.24.0 archive](https://archive.apache.org/dist/thrift/0.24.0/)
 
 ```bash
-##source file content
-#export THRIFT_BIN=
-#export MVN_BIN=
-#export JAVA_HOME=
-
-##amend as below,MacOS as an example
-export THRIFT_BIN=/opt/homebrew/Cellar/thrift@0.16.0/0.16.0/bin/thrift
-export MVN_BIN=/opt/homebrew/Cellar/maven/3.9.0/bin/mvn
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-8.jdk/Contents/Home
+cmake -S thrift-0.24.0 -B thrift-build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_LIBRARIES=OFF -DBUILD_TESTING=OFF -DBUILD_TUTORIALS=OFF
+cmake --build thrift-build --target thrift-compiler
 ```
 
-Install `thrift` 0.16.0
+If CMake picks up the older system Bison on macOS, add
+`-DBISON_EXECUTABLE="$(brew --prefix bison)/bin/bison"` to the configure command.
 
-Windows:
+From this repository, pass the path to the resulting compiler to Maven.
+
 ```bash
-  1. Download: `http://archive.apache.org/dist/thrift/0.16.0/thrift-0.16.0.exe`
-  2. Modify thrift-0.16.0.exe to thrift.exe
+mvn -pl thrift-service -Dthrift.binary=/path/to/thrift-build/compiler/cpp/bin/thrift clean package
 ```
 
-MacOS:
-```bash
-   brew install thrift@0.16.0
-```
-
-Note: Executing `brew install thrift@0.16.0` on MacOS may report an error that the version cannot be found. The solution is as follows, execute it in the terminal:
-```bash
-  1. brew tap-new $USER/local-tap
-  2. brew extract --version='0.16.0' thrift $USER/local-tap
-  3. brew install thrift@0.16.0
-```
-
-Linux:
-```bash
-  1. wget https://archive.apache.org/dist/thrift/0.16.0/thrift-0.16.0.tar.gz  # Download source package
-  2. yum install -y autoconf automake libtool cmake ncurses-devel openssl-devel lzo-devel zlib-devel gcc gcc-c++  # Install dependencies
-  3. tar zxvf thrift-0.16.0.tar.gz
-  4. cd thrift-0.16.0
-  5. ./configure --without-tests
-  6. make
-  7. make install
-  8. thrift --version  # Check the version after installation is complete
-```
-Note: If you have compiled Doris, you do not need to install thrift, you can directly use `$DORIS_HOME/thirdparty/installed/bin/thrift`
-
-Execute following command in `thrift-service` dir:
-```bash
-  sh build.sh
-```
+On Linux and macOS you can also copy `custom_env.sh.tpl` to `custom_env.sh`, set
+`THRIFT_BIN` to the compiler path, and run `bash build.sh` from `thrift-service`.

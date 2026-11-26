@@ -28,7 +28,8 @@ under the License.
     <artifactId>thrift-service</artifactId>
 
     <properties>
-        <libthrift.version>0.16.0</libthrift.version>
+        <libthrift.version>0.24.0</libthrift.version>
+        <thrift.binary>thrift</thrift.binary>
     </properties>
 
     <dependencies>
@@ -36,6 +37,11 @@ under the License.
             <groupId>org.apache.thrift</groupId>
             <artifactId>libthrift</artifactId>
             <version>${libthrift.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.36</version>
         </dependency>
     </dependencies>
 
@@ -46,7 +52,8 @@ under the License.
                 <artifactId>maven-thrift-plugin</artifactId>
                 <version>0.1.11</version>
                 <configuration>
-                    <generator>java:fullcamel</generator>
+                    <thriftExecutable>${thrift.binary}</thriftExecutable>
+                    <generator>java:fullcamel,generated_annotations=suppress</generator>
                 </configuration>
                 <executions>
                     <execution>

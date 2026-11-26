@@ -43,6 +43,36 @@ github:
     merge:   false
     rebase:  false
 
+  rulesets:
+    - name: Default Branch Protection
+      type: branch
+      branches:
+        includes:
+          - "~DEFAULT_BRANCH"
+          - "*-release"
+          - "release/**/*"
+          - "rel/**/*"
+      bypass_teams: []
+      restrict_deletion: true
+      restrict_force_push: true
+      required_pull_request_reviews:
+        required_approving_review_count: 1
+        dismiss_stale_reviews: true
+
+    # The required checks are available on the default branch. Existing release
+    # branches need the workflow updates before they can require these checks.
+    - name: Default Branch CI
+      type: branch
+      restrict_deletion: false
+      restrict_force_push: false
+      required_status_checks:
+        - name: License header
+          app_slug: 15368 # GitHub Actions
+        - name: Build Extensions
+          app_slug: 15368
+        - name: Go SDK tests
+          app_slug: 15368
+
 notifications:
     pullrequests_status:  commits@doris.apache.org
 
